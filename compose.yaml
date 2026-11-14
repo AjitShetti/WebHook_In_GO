@@ -1,0 +1,83 @@
+services:
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: ingest
+    env_file:
+      - .env
+    environment:
+      PORT: "8080"
+    ports:
+      - "18080:8080"
+    restart: unless-stopped
+
+  dispatcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: dispatcher
+    env_file:
+      - .env
+    environment:
+      REDIS_ADDR: redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: worker
+    env_file:
+      - .env
+    environment:
+      REDIS_ADDR: redis:6379
+      SUBSCRIBER_URL: http://receiver:8081/webhook
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-local-webhook-test-secret}
+    expose:
+      - "9090"
+    depends_on:
+      redis:
+        condition: service_healthy
+      receiver:
+        condition: service_started
+    restart: unless-stopped
+
+  receiver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: receiver
+    environment:
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-local-webhook-test-secret}
+    ports:
+      - "18081:8081"
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+
+networks:
+  default:
+    name: webhook_default
+    external: true
